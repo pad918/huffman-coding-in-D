@@ -32,11 +32,56 @@ class CompressedFile{
         std.file.write(filePath, file);
     }
 
-    ubyte[] uncompress(){
-        //Get decode table
-        ubyte[] uncomp;
+    Array!int uncompress(){
+        //Create int[BitList] table
+        int[BitList] decodeMap = new int[BitList];
+        ubyte bitsPerLength = file[0];
+        uint  bitListLength = *cast(uint*)file[1..5];
+        printf("Bit list length: %d\n", bitListLength);
 
-        return uncomp;
+        BitList fileList = new BitList(file[5..file.length], bitListLength);
+        fileList.bit = 0;
+
+        ubyte getSymbol(BitList fList){
+            BitList list = new BitList();
+            for(int i = 0; i<8; i++){
+                list.setNext(fList.getBit(fList.bit++)!=0);
+            }
+            return list.getBytes()[0];
+        }  
+
+        ubyte getLen(BitList fList, ubyte bitPerLen){
+            BitList list = new BitList();
+            for(int i = 0; i<bitPerLen; i++){
+                list.setNext(fList.getBit(fList.bit++)!=0);
+            }
+            return list.getBytes()[0];
+        }
+
+        BitList getBitList(BitList fList, ubyte len){
+            BitList list = new BitList();
+            for(int i = 0; i<len; i++){
+                list.setNext(fList.getBit(fList.bit++)!=0);
+            }
+            return list;
+        }       
+
+        while(fileList.bit<bitListLength){
+            ubyte symbol    = getSymbol(fileList);
+            ubyte len       = getLen(fileList, bitsPerLength);
+            BitList bitList = getBitList(fileList, len);
+            //Add key value pair
+            decodeMap[bitList] = symbol;
+        }
+        //writeln("Found the key value store: ");
+        //writeln(decodeMap);
+        int startPos = 5+fileList.getLengthInBytes(bitListLength);
+        uint totalEncodedBits = cast(uint)(file.length - startPos)*8;
+        //printf("Total encoded bits: %d\n", totalEncodedBits);
+        BitList encodedList = 
+            new BitList(file[startPos.. file.length], totalEncodedBits);
+        Decoder dec = new Decoder(decodeMap);
+        return dec.decode(encodedList);
     }
 
 }
@@ -361,17 +406,6 @@ class Decoder{
         *cast(uint*)(&lenBytes) = serialized.bit;
         //printf("Length of bitlist = %d, len in Bytes: %d\n", serialized.bit, serialized.getLengthInBytes(serialized.bit));
         return [bitsPerLen] ~ lenBytes ~ serialized.getBytes();
-    }
-
-    static Decoder fromFile(ubyte[] file){
-        //Should be changed, not always 513B
-        ubyte[] serialized = file[0..513];
-        int[BitList] table = new int[BitList];
-
-        ubyte bytesPerBitList = serialized[0];
-
-
-        return new Decoder(table);
     }
 
 }
