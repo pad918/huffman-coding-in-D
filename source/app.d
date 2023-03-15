@@ -3,34 +3,42 @@ import std.string;
 import std.array;
 import std.conv;
 import std.algorithm;
+import std.file;
+import std.getopt;
 import huffman;
 import test;
+import bench;
 
 
-void main()
+void main(string[] args)
 {
-    //simpleTest();
-    //testBitList();
-    
-    
+    //bench.bench();
+    string inPath, outPath;
+    auto helpInformation = getopt(
+        args,
+        "i", "Select an input file",   &inPath,    // numeric
+        "o", "Select an output file",  &outPath,      // string
+    );
 
-    
-    auto freq = huffman.getFrequencyOfFile("dlang.html");
-    printf("Fungerar!\n");
-    //writeln(freq);
+    if (helpInformation.helpWanted)
+    {
+      defaultGetoptPrinter("Huffman compressor v_0.0",
+        helpInformation.options);
+    }
 
-    Node testTree = huffman.getHuffmanTree(freq);
-    //writeln(testTree.toStr);
+    if(inPath !is null){
+        write("Input = ");
+        writeln(inPath);
+    }
+
+    //TEST
+
+    auto freq = huffman.getFrequencyOfFile(inPath);
+    Node testTree = huffman.Node.fromFrequency(freq);
     auto encoder = new Encoder(testTree);
-    writeln(encoder);
-    auto a = "Wikipedia is a good source of information!";
-    BitList enc = encoder.encode(a);
-    printf("Total encoded string: \n");
-    writeln(enc.toString());
     auto decoder = new Decoder(testTree);
-    auto symbols = decoder.decode(enc);
-    printf("Decoded text:\n");
-    
-    symbols.each!(a => write(to!string(cast(char)a)));
-    
+    auto bytes = decoder.serialize();
+    ubyte[] str = cast(ubyte[]) "small test";
+    auto cf = CompressedFile.fromBytes(str, encoder, decoder);
+    cf.writeToFile(outPath);//
 }

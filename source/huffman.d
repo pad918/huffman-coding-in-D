@@ -6,6 +6,41 @@ import std.algorithm;
 import std.stdio;
 import std.container;
 
+
+
+class CompressedFile{
+    ubyte[] file;
+    
+
+    this(){}
+    this(ubyte[] f) {
+        this.file = f;
+    }
+
+    static CompressedFile fromFile(string filePath){
+        return new CompressedFile(cast(ubyte[]) std.file.read(filePath));
+    }
+
+    static CompressedFile fromBytes(ubyte[] raw, Encoder e, Decoder d){
+        ubyte[] compressed = e.encode(raw).getBytes();
+        ubyte[] decoderSerialized = d.serialize();
+        return new CompressedFile(decoderSerialized ~ compressed);
+    }
+
+    void writeToFile(string filePath){
+        //Write bytes to file
+        std.file.write(filePath, file);
+    }
+
+    ubyte[] uncompress(){
+        //Get decode table
+        ubyte[] uncomp;
+
+        return uncomp;
+    }
+
+}
+
 class Node
 {
     bool isSymbol = false;
@@ -28,6 +63,35 @@ class Node
         return "[" ~ to!string(isSymbol) ~ ", " ~ to!string(symbol) ~ ", " ~ to!string(freq) ~ "]" ~ 
             ": {" ~ l ~ "} {" ~ r ~ "}";
     }
+
+    static Node fromFrequency(int[ubyte] freq){
+        //Create list of nodes from freq:
+        
+        Node[] nodes = new Node[freq.length];
+        int i=0;
+        foreach (key; freq.byKey())
+        {
+            nodes[i] = new Node(true, key, freq[key]);
+            ++i;
+        }
+    
+        // Put together until one huffman tree is constructed:
+        auto sorted = nodes.sort!("a.freq < b.freq");
+        
+        while(sorted.length>1){
+            //Merge 0 and 1
+            Node newNode  = new Node(false, 0, sorted[0].freq + sorted[1].freq);
+            newNode.left  = sorted[0];
+            newNode.right = sorted[1];
+            sorted.popFront();
+            sorted[0] = newNode;
+            //Sort (can be done in a better way!)
+            sorted = sorted.sort!("a.freq < b.freq");
+        }
+    
+        return sorted[0];
+    }
+
 }
 
 class BitList{
@@ -54,6 +118,14 @@ class BitList{
     this(){
         bytes.length = 2;
     }
+    this(ubyte[] from, uint len){
+        bit = len;
+        bytes.length = getLengthInBytes(len); //
+        for(int i=0; i<bytes.length; i++)
+        {
+            bytes[i] = from[i];
+        }
+    }
     BitList copy(){
         BitList l = new BitList;
         l.bytes = this.bytes.dup;
@@ -74,6 +146,18 @@ class BitList{
             setNext(l.getBit(i)!=0);
     }
 
+    uint getLengthInBytes(int b){
+        uint l = ((b/8)) + ((b&7)?1:0);
+        return l?l:1; // max(l, 1);
+    }
+
+    ubyte[] getBytes(){
+        //Clone bytes and shorten them:
+        long lastByte = cast(long)(getLengthInBytes(bit));
+        ubyte[] clone = bytes.dup;
+        clone = clone[0..cast(uint)lastByte];
+        return clone;
+    }
 
     //Overrides
     override string toString() const @safe pure nothrow 
@@ -109,8 +193,7 @@ class BitList{
         int i=0;
         foreach (ubyte b; bytes)
         {
-            hash ^= b << (i&4);
-            i++;
+            hash ^= b << (i++&4);
         }
         return hash;
     }
@@ -133,33 +216,7 @@ int[ubyte] getFrequencyOfFile(string filePath){
     return frequency(file);
 }
 
-Node getHuffmanTree(int[ubyte] freq){
-    //Create list of nodes from freq:
-    
-    Node[] nodes = new Node[freq.length];
-    int i=0;
-    foreach (key; freq.byKey())
-    {
-        nodes[i] = new Node(true, key, freq[key]);
-        ++i;
-    }
 
-    // Put together until one huffman tree is constructed:
-    auto sorted = nodes.sort!("a.freq < b.freq");
-    
-    while(sorted.length>1){
-        //Merge 0 and 1
-        Node newNode  = new Node(false, 0, sorted[0].freq + sorted[1].freq);
-        newNode.left  = sorted[0];
-        newNode.right = sorted[1];
-        sorted.popFront();
-        sorted[0] = newNode;
-        //Sort (can be done in a better way!)
-        sorted = sorted.sort!("a.freq < b.freq");
-    }
-
-    return sorted[0];
-}
 
 class Encoder{
     BitList[int] encodeMap;
@@ -210,6 +267,16 @@ class Encoder{
         }
         return encoded;
     }
+
+    BitList encode(ubyte[] symblos){
+        assert(encodeMap !is null);
+        BitList encoded = new BitList();
+        foreach (s; symblos)
+        {
+            encoded.append(encodeMap[cast(int)s]);
+        }
+        return encoded;
+    }
     
 }
 
@@ -218,6 +285,10 @@ class Decoder{
 
     this(Node huffmanTree){
         decodeMap = createDecodeMap(huffmanTree, new BitList());
+    }
+
+    this(int[BitList] dm){
+        decodeMap = dm;
     }
 
     int[BitList] createDecodeMap(Node huffmanTree, BitList list){
@@ -262,6 +333,45 @@ class Decoder{
         }
 
         return symbols;
+    }
+
+    //structure
+    // [0]      ==> bits per len
+    // [1..5]   ==> length of decoding bitlist in bits
+    // [6..len] ==> BitList   
+    ubyte[] serialize(){
+        ubyte bitsPerLen = 4;
+
+        BitList serialized = new BitList();
+        foreach (BitList key; decodeMap.byKey())
+        {
+            //Store value
+            BitList value = new BitList([cast(ubyte)decodeMap[key]], 8);
+
+            //Store length of bitlist
+            BitList len = new BitList([cast(ubyte)key.bit], bitsPerLen);
+            
+            //Store the bitlist
+            serialized.append(value);
+            serialized.append(len);
+            serialized.append(key);
+        }
+        
+        ubyte[4] lenBytes;
+        *cast(uint*)(&lenBytes) = serialized.bit;
+        //printf("Length of bitlist = %d, len in Bytes: %d\n", serialized.bit, serialized.getLengthInBytes(serialized.bit));
+        return [bitsPerLen] ~ lenBytes ~ serialized.getBytes();
+    }
+
+    static Decoder fromFile(ubyte[] file){
+        //Should be changed, not always 513B
+        ubyte[] serialized = file[0..513];
+        int[BitList] table = new int[BitList];
+
+        ubyte bytesPerBitList = serialized[0];
+
+
+        return new Decoder(table);
     }
 
 }
